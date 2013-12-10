@@ -2,6 +2,9 @@
 #
 # COMMON POSTGRES MAINTENANCE QUERIES STOLEN FROM HEROKUs PG-Extras
 # https://github.com/heroku/heroku-pg-extras/blob/master/init.rb
+#
+# IMPORTANT: I only tested these queries on Postgres 9.2.3
+#
 # Available commands so fare
 #
 # * cache_hit
@@ -14,6 +17,9 @@
 # * vacuum_stats
 # * extensions
 # * outliers
+# * long_running_queries
+# * blocking
+# * Locks
 #
 #
 # USAGE: ./pg_extras.sh DATABASE COMMAND
@@ -197,6 +203,56 @@ OUTLIERS="SELECT query, time, calls, hits
   ORDER BY hits ASC, calls DESC, avg_time ASC
 "
 
+# FROM http://wiki.postgresql.org/wiki/Lock_Monitoring
+LOCKS="
+  SELECT bl.pid                 AS blocked_pid,
+         a.usename              AS blocked_user,
+         ka.query               AS blocking_statement,
+         now() - ka.query_start AS blocking_duration,
+         kl.pid                 AS blocking_pid,
+         ka.usename             AS blocking_user,
+         a.query                AS blocked_statement,
+         now() - a.query_start  AS blocked_duration
+  FROM  pg_catalog.pg_locks         bl
+   JOIN pg_catalog.pg_stat_activity a  ON a.pid = bl.pid
+   JOIN pg_catalog.pg_locks         kl ON kl.transactionid = bl.transactionid AND kl.pid != bl.pid
+   JOIN pg_catalog.pg_stat_activity ka ON ka.pid = kl.pid
+  WHERE NOT bl.granted;
+"
+
+LONG_RUNNING_QUERIES="
+      SELECT
+        pid,
+        now() - pg_stat_activity.query_start AS duration,
+        query
+      FROM
+        pg_stat_activity
+      WHERE
+        pg_stat_activity.query <> ''::text
+        AND state <> 'idle'
+        AND now() - pg_stat_activity.query_start > interval '5 minutes'
+      ORDER BY
+        now() - pg_stat_activity.query_start DESC;
+"
+
+BLOCKING="SELECT bl.pid AS blocked_pid,
+    ka.query AS blocking_statement,
+    now() - ka.query_start AS blocking_duration,
+    kl.pid AS blocking_pid,
+    a.query AS blocked_statement,
+    now() - a.query_start AS blocked_duration
+  FROM pg_catalog.pg_locks bl
+  JOIN pg_catalog.pg_stat_activity a
+    ON bl.pid = a.pid
+  JOIN pg_catalog.pg_locks kl
+    JOIN pg_catalog.pg_stat_activity ka
+      ON kl.pid = ka.pid
+  ON bl.transactionid = kl.transactionid AND bl.pid != kl.pid
+  WHERE NOT bl.granted
+"
+
+
+
 case "$COMMAND" in
   index_usage)
       QUERY=$INDEX_USGAGE
@@ -227,6 +283,15 @@ case "$COMMAND" in
   ;;
   outliers)
     QUERY=$OUTLIERS
+  ;;
+  locks)
+    QUERY=$LOCKS
+  ;;
+  blocking)
+    QUERY=$BLOCKING
+  ;;
+  long_running_queries)
+    QUERY=$LONG_RUNNING_QUERIES
   ;;
 esac
 
